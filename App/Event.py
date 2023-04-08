@@ -5,7 +5,6 @@
 # @Github: sudoskys
 
 import json
-import math
 import random
 import pathlib
 import asyncio
@@ -347,7 +346,7 @@ class Reply(object):
                 response = await chat_client.predict(
                     llm_param=llm_param,
                     prompt=prompt,
-                    predict_tokens=math.ceil(int(_csonfig["token_limit"]) * 0.7),
+                    predict_tokens=150
                 )
                 prompt.clean(clean_prompt=True)
                 _deal = response.reply
@@ -384,9 +383,9 @@ class Reply(object):
                 if _head:
                     prompt.description += str(_head)[:400]
                 llm_param = LLM_MODEL_PARAM
-                llm_param.temperature = 0.5
+                llm_param.temperature = 0.9
                 llm_param.logit_bias = _style
-                llm_param.presence_penalty = 0.5
+                llm_param.presence_penalty = 0.7
                 response = await chat_client.predict(
                     prompt=prompt,
                     predict_tokens=int(_csonfig["token_limit"]),
@@ -1140,9 +1139,6 @@ async def MasterCommand(user_id: int, Message: User_Message, config):
                         UserManager(int(_len_)).save({"white": False})
                         _reply.append(_ev)
                         logger.info(_ev)
-
-            if "/reset_user" in command:
-                UserManager(0).reset()
 
             # UPDATE
             if command.startswith("/update_detect"):
