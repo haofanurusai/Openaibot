@@ -101,6 +101,9 @@ async def parse_photo(bot: AsyncTeleBot, message: types.Message) -> str:
         except Exception as e:
             logger.warning(f"Blip:{e}")
 
+    if msg_text:
+        return "".join(msg_text)
+
     if message.photo and BlipInterrogator:
         msg_caption = message.caption if message.caption else ""
         # RECOGNIZE File
@@ -113,8 +116,11 @@ async def parse_photo(bot: AsyncTeleBot, message: types.Message) -> str:
         except Exception as e:
             logger.warning(f"Blip:{e}")
 
+    if msg_text:
+        return "".join(msg_text)
+
     if message.document:
-        if message.document.mime_type in ["image/png"]:
+        if message.document.mime_type in ["image/png", "image/jpg"]:
             msg_caption = message.caption if message.caption else ""
             try:
                 photo_text = await recognize_photo(bot=bot,
@@ -155,7 +161,7 @@ async def parse_photo(bot: AsyncTeleBot, message: types.Message) -> str:
             except Exception as e:
                 logger.warning(f"Blip:{e}")
         if message.reply_to_message.document:
-            if message.reply_to_message.document.mime_type in ["image/png"]:
+            if message.reply_to_message.document.mime_type in ["image/png", "image/jpg"]:
                 msg_caption = message.reply_to_message.caption if message.reply_to_message.caption else ""
                 try:
                     photo_text = await recognize_photo(bot=bot,
@@ -344,7 +350,15 @@ class BotRunner(object):
                                                    )
                     elif _friends_message.reply:
                         _caption = f"{_friends_message.reply}\n{_config.INTRO}"
-                        msg = await bot.reply_to(message, _caption)
+
+                        result = ''
+                        for c in _caption:
+                            if c in ['_', '*', '[', ']', '(', ')', '~', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']:
+                                result += '\\' + c
+                            else:
+                                result += c
+
+                        msg = await bot.reply_to(message, result, parse_mode='MarkdownV2')
                         if EmojiPredict:
                             emoji = EmojiPredict.predict(prompt=_caption,
                                                          emoji_folder_dict=EmojiPredict.convert_folder(
@@ -397,7 +411,15 @@ class BotRunner(object):
                                              )
                     elif _friends_message.reply:
                         _caption = f"{_friends_message.reply}\n{_config.INTRO}"
-                        await bot.reply_to(message, _caption)
+
+                        result = ''
+                        for c in _caption:
+                            if c in ['_', '*', '[', ']', '(', ')', '~', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']:
+                                result += '\\' + c
+                            else:
+                                result += c
+
+                        await bot.reply_to(message, result, parse_mode='MarkdownV2')
                         if EmojiPredict:
                             emoji = EmojiPredict.predict(prompt=_caption,
                                                          emoji_folder_dict=EmojiPredict.convert_folder(

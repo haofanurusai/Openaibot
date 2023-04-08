@@ -5,6 +5,7 @@
 # @Github: sudoskys
 
 import json
+import math
 import random
 import pathlib
 import asyncio
@@ -346,7 +347,7 @@ class Reply(object):
                 response = await chat_client.predict(
                     llm_param=llm_param,
                     prompt=prompt,
-                    predict_tokens=150
+                    predict_tokens=math.ceil(int(_csonfig["token_limit"]) * 0.7),
                 )
                 prompt.clean(clean_prompt=True)
                 _deal = response.reply
@@ -383,9 +384,9 @@ class Reply(object):
                 if _head:
                     prompt.description += str(_head)[:400]
                 llm_param = LLM_MODEL_PARAM
-                llm_param.temperature = 0.9
+                llm_param.temperature = 0.5
                 llm_param.logit_bias = _style
-                llm_param.presence_penalty = 0.7
+                llm_param.presence_penalty = 0.5
                 response = await chat_client.predict(
                     prompt=prompt,
                     predict_tokens=int(_csonfig["token_limit"]),

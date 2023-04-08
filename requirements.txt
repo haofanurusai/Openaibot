@@ -1,7 +1,6 @@
 pyTelegramBotAPI
 rtoml
 rich
-aiohttp
 redis
 loguru
 httpx
@@ -31,3 +30,4 @@ tzlocal
 psutil
 piexif
 pytz
+wcferry
