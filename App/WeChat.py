@@ -96,6 +96,7 @@ class BotRunner(object):
 
     # # # 开始运行 # # #
     def run(self, pLock=None):
+        global WECHAT_DEBUG
 
         if self.config.debug is None:
             WECHAT_DEBUG = False
