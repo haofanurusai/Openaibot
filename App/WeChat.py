@@ -6,7 +6,7 @@
 
 # TODO: 退出时自动清理线程；提示语英化；图片语音支持(待WeChatFerry添加)；
 # TODO: 过滤掉官方账号（文件传输助手，微信支付等）避免翻车
-# 备考: 通讯录列表self.contacts中的每个元素为如下字典：
+# 备考: 通讯录列表contacts中的每个元素为如下字典：
 '''
 {
     'wxid': 'wxid_114514acceed', # wxid，tx指派的，唯一主键
@@ -21,10 +21,11 @@
 
 import asyncio
 import binascii
-import time
 import re
-from threading import Thread
+import time
 from collections import deque
+from copy import deepcopy
+from threading import Thread
 from wcferry import Wcf
 from loguru import logger
 
@@ -34,16 +35,13 @@ from utils.Frequency import Vitality
 from App import Event
 
 # 调试开关
-WECHAT_DEBUG = True
+WECHAT_DEBUG = False
 
 WECHAT_SUFFIX_ID = 104
-WECHAT_WAIT_SECONDS = 1.5  # 连接后等待秒数，低配电脑请设长一些
-WECHAT_UPDATE_INTERVAL = 0.1  # 刷新消息列表秒数
-WECHAT_QUERY_MAX_ATTEMPT = 5  # 查询操作最大尝试次数
+WECHAT_WAIT_SECONDS = 5  # 连接后等待秒数，低配电脑请设长一些
 
 # 以下是微信端支持的命令
-WECHAT_GENERAL_CMD = ('/chat', '/voice', '/write',
-                      '/style', '/forgetme', '/remind')
+WECHAT_GENERAL_CMD = ('/chat', '/write', '/style', '/forgetme', '/remind')
 # 以下超管命令的每个参数都是微信昵称或微信号，要打 CRC32 补丁
 WECHAT_ADMIN_CMD = (
     '/add_block_group',
@@ -92,21 +90,20 @@ class BotRunner(object):
     def __init__(self, _config):
         self.config = _config
         self.wcf = None
-        self.contacts = []
-        self.cache = {
-            'code': {},
-            'name': {},
-            'crc':  {}
-        }
         self.wxid_whitelist = []
+        self.cache_wxid = {}
+        self.cache_crc = {}
 
     # # # 开始运行 # # #
     def run(self, pLock=None):
+
+        if self.config.debug is None:
+            WECHAT_DEBUG = False
+        else:
+            WECHAT_DEBUG = self.config.debug
+
         if not self.config.host_port:
             logger.info('APP:微信 Config/app.toml中未指定host_port参数')
-            return
-        elif self.config.debug is None:
-            logger.info('APP:微信 Config/app.toml中未指定debug参数')
             return
         try:
             # 初始化 Wcf 实例
@@ -124,39 +121,7 @@ class BotRunner(object):
             return
         logger.success(f'APP:微信 {self.wcf.get_self_wxid()} 连接成功')
 
-        # 调取通讯录备用
-        self.contacts = self.wcf.get_contacts()
-        if WECHAT_DEBUG:
-            for elem in self.contacts:
-                print(elem.values())
-
-        # 建立白名单，顺便更新一波缓存
-        # 首先加入自己
-        my_name = self.config.my_name
-        self.wxid_whitelist.append(self.wcf.get_self_wxid())
-        self.cache['code'][self.wcf.get_self_wxid()] = self.wcf.get_self_wxid()
-        self.cache['name'][self.wcf.get_self_wxid()] = '*自己*'
-        self.cache['crc'][self.wcf.get_self_wxid()] = self.crc(
-            self.wcf.get_self_wxid())
-        # 然后按微信号进行匹配
-        for elem in self.contacts:
-            self.cache['code'][elem['wxid']] = elem['code']
-            self.cache['name'][elem['wxid']] = elem['name']
-            self.cache['crc'][elem['wxid']] = self.crc(elem['wxid'])
-            if elem['code'] in self.config.master:
-                self.wxid_whitelist.append(elem['wxid'])
-        # 最后将管理员 wxid 翻为 CRC32 供 Event 部分调用
-        self.config.master = []
-        for elem in self.wxid_whitelist:
-            self.config.master.append(self.crc(elem))
-
-        # 注册机器人配置
-        self.profile_mgr = Setting.ProfileManager()
-        self.profile_mgr.access_wechat(
-            bot_name=my_name,
-            bot_id=self.config.master[0],
-            init=True
-        )
+        self.build_cache(init=True)
 
         # 开启消息接收
         self.wcf.enable_receiving_msg()
@@ -192,10 +157,9 @@ class BotRunner(object):
             try:
                 msg = self.wcf.get_msg()
             except:
-                time.sleep(WECHAT_UPDATE_INTERVAL)
                 continue
 
-            # BUGFIX: 自己在群里发的消息，id是群的id
+            # WeChatFerry BUGFIX: 自己在群里发的消息，id是群的id
             if msg.from_self() and msg.sender != self.wxid_whitelist[0]:
                 msg.roomid = msg.sender
                 msg.sender = self.wxid_whitelist[0]
@@ -206,7 +170,7 @@ class BotRunner(object):
                 # 调试输出
                 logger.info(str(msg))
             # 友好输出
-            logger.info('APP:微信 %s%s%s 说: 【%s】' %
+            logger.info('APP:微信 %s%s%s 说: %s' %
                         (
                             self.wxid_conv('name', msg.sender),
                             ' (@群:' if msg.from_group() else '',
@@ -245,24 +209,54 @@ class BotRunner(object):
                     self.add_async_task(coro=self.on_msg_single(msg))
 
     # # # 用wxid查询其它字段 # # #
-    def wxid_conv(self, dest_key: str, wxid: str):
+    def wxid_conv(self, dest_key: str, wxid: str, layer: int = 0):
+        if layer > 5:
+            raise LookupError('未查询到信息')
         try:
-            return self.cache[dest_key][wxid]
+            return self.cache_wxid[wxid][dest_key]
         except:
-            i = 0
-            res = None
-            while res is None and i < WECHAT_QUERY_MAX_ATTEMPT:
-                i += 1
-                # 若没找到，更新通讯录
-                self.contacts = self.wcf.get_contacts()
-                for elem in self.contacts:
-                    if elem['wxid'] == wxid:
-                        res = self.crc(
-                            wxid) if dest_key == 'crc' else elem[dest_key]
-                        self.cache[dest_key][wxid] = res
-                        return res
-            # TODO: 改为抛异常
-            return None
+            self.build_cache()
+            return self.wxid_conv(dest_key=dest_key, wxid=wxid, layer=layer + 1)
+
+    # # # 建立 wxid, crc 速查表、白名单等缓存 # # #
+    def build_cache(self, init: bool = False):
+        self.wxid_whitelist = []
+        # 更新缓存
+        # 首先加入自己
+        my_wxid = self.wcf.get_self_wxid()
+        my_name = self.config.my_name
+        my_crc = self.crc(my_wxid)
+        my_elem = {
+            'code': my_wxid,
+            'name': my_name + '(自己)',
+            'crc': my_crc
+        }
+        self.cache_wxid[my_wxid] = my_elem
+        self.cache_crc[str(my_crc)] = my_elem
+        self.wxid_whitelist.append(my_wxid)
+
+        # 然后按微信号进行匹配
+        for elem in self.wcf.get_contacts():
+            wxid = elem['wxid']
+            crc = elem['crc'] = self.crc(wxid)
+            self.cache_wxid[wxid] = elem
+            self.cache_wxid[str(crc)] = elem
+            if elem['code'] in self.config.master:
+                self.wxid_whitelist.append(wxid)
+
+        # 最后将管理员 wxid 翻为 CRC32 供 Event 部分调用
+        self.config.master = []
+        for wxid in self.wxid_whitelist:
+            self.config.master.append(self.cache_wxid[wxid]['crc'])
+
+        if init:
+            # 注册机器人配置
+            self.profile_mgr = Setting.ProfileManager()
+            self.profile_mgr.access_wechat(
+                bot_name=my_name,
+                bot_id=self.config.master[0],
+                init=True
+            )
 
     # # # 字符串 CRC32 # # #
     def crc(self, txt: str = ''):
@@ -292,7 +286,7 @@ class BotRunner(object):
             if match:
                 old_str = match.group()
                 crc_id = old_str[:-3]
-                wxid = list(self.cache['crc'].keys())[list(self.cache['crc'].values()).index(int(crc_id))]
+                wxid = self.cache_crc[crc_id]['wxid']
             else:
                 return txt
         else:
@@ -325,14 +319,25 @@ class BotRunner(object):
             elif args[0] not in WECHAT_ADMIN_CMD:
                 raise NameError('暂不支持该命令')
 
-            # TODO: 通过一些手段将以下代码优化成一次遍历，可能性微存
-            for item in args[1:ending]:
-                for elem in self.contacts:
-                    if elem['name'].startswith(item) or\
-                            elem['code'] == item or\
-                            elem['wxid'] == item:
-                        new_cmd_args.append(
-                            f'{self.wxid_conv("crc", elem["wxid"])}{WECHAT_SUFFIX_ID}')
+            wx_list = deepcopy(args[1:ending])
+            
+            for crc_str in self.cache_crc:
+                elem = self.cache_crc[crc_str]
+
+                i = 0
+                while i < len(wx_list):
+                    it = wx_list[i]
+                    if elem['name'].startswith(it) or\
+                            elem['wxid'] == it or\
+                            elem['code'] == it:
+                        new_cmd_args.append(f'{crc_str}{WECHAT_SUFFIX_ID}')
+                        del wx_list[i]
+                    else:
+                        i += 1
+                
+                if len(wx_list) == 0:
+                    break
+
             for item in args[ending:]:
                 new_cmd_args.append(item)
 
