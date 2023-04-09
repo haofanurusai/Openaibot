@@ -117,7 +117,8 @@ class BotRunner(object):
             elif not self.wcf.is_login():
                 logger.info('APP:微信 成功连接到远端，但是客户端没有登录')
                 return
-        except:
+        except Exception as e:
+            logger.warning(str(e))
             logger.info('APP:微信 WcFerry登录失败')
             return
         logger.success(f'APP:微信 {self.wcf.get_self_wxid()} 连接成功')
@@ -215,7 +216,8 @@ class BotRunner(object):
             raise LookupError('未查询到信息')
         try:
             return self.cache_wxid[wxid][dest_key]
-        except:
+        except Exception as e:
+            logger.warning(str(e))
             self.build_cache()
             return self.wxid_conv(dest_key=dest_key, wxid=wxid, layer=layer + 1)
 
@@ -249,6 +251,15 @@ class BotRunner(object):
         self.config.master = []
         for wxid in self.wxid_whitelist:
             self.config.master.append(self.cache_wxid[wxid]['crc'])
+
+        if WECHAT_DEBUG:
+            print('======== wxid cache ========')
+            for i in self.cache_wxid:
+                print(i,': ',self.cache_wxid[i])
+                
+            print('\r\n======== crc32 cache ========')
+            for i in self.cache_crc:
+                print(i,': ',self.cache_crc[i])
 
         if init:
             # 注册机器人配置
@@ -389,7 +400,8 @@ class BotRunner(object):
         except NameError as ne:
             self.wcf.send_text(str(ne), msg.sender)
             return
-        except:
+        except Exception as e:            
+            logger.warning(str(e))
             self.wcf.send_text('命令中存在错误，检查参数个数是否匹配', msg.sender)
             return
 
@@ -442,7 +454,7 @@ class BotRunner(object):
                         started = True
             except Exception as e:
                 logger.warning(
-                    f"{e}\nThis is a trigger Error,may [trigger] typo [tigger],try to check your config?")
+                    f"{e}\r\nThis is a trigger Error,may [trigger] typo [tigger],try to check your config?")
 
         if started:
             request_timestamps.append(time.time())
